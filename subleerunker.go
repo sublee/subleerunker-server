@@ -3,7 +3,6 @@
 package subleerunker
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -65,7 +64,7 @@ func getScore(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	score, err := loadScore(c, time.Now())
 	if err != nil {
-		http.Error(w, "Datastore Failed", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	fmt.Fprint(w, score)
@@ -75,7 +74,7 @@ func getScore(w http.ResponseWriter, r *http.Request) {
 func putScore(w http.ResponseWriter, r *http.Request) {
 	scoreValue, err := strconv.Atoi(r.FormValue("score"))
 	if err != nil {
-		http.Error(w, "Invalid Score Input", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	c := appengine.NewContext(r)
@@ -85,7 +84,10 @@ func putScore(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if scoreValue < prevScoreValue {
-			return errors.New("not best score")
+			return &NotHigherScore{
+				Score:     scoreValue,
+				PrevScore: prevScoreValue,
+			}
 		}
 		key := getKey(c)
 		score := &Score{
