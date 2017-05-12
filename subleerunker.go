@@ -214,8 +214,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 
 // A combined handler for every methods of "/champion".
 func HandleChampion(w http.ResponseWriter, r *http.Request) {
-	// w.Header().Set("Access-Control-Allow-Origin", "https://sublee.github.io")
-	w.Header().Set("Access-Control-Allow-Origin", "http://nop.subl.ee")
+	w.Header().Set("Access-Control-Allow-Origin", "https://sublee.github.io")
 	switch strings.ToUpper(r.Method) {
 	case "OPTIONS":
 		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
