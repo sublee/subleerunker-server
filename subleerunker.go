@@ -195,19 +195,21 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 	log.Debugf(c, "Trying to rename champion: %s", name)
 	_, token, _ := r.BasicAuth()
 	at := time.Now()
-	_champion := new(Champion)
+	var _champion Champion
+	var prevName string
 	err := datastore.RunInTransaction(c, func(c context.Context) error {
 		champion, err := LoadChampion(c, at)
 		if err != nil {
 			return err
 		}
+		prevName = champion.Name
 		if champion.Token != token {
 			return &NotAuthorized{}
 		}
 		champion.Name = name
 		key := GetKey(c)
 		_, err = datastore.Put(c, key, champion)
-		_champion = champion
+		_champion = *champion
 		return err
 	}, nil)
 	switch err.(type) {
@@ -220,8 +222,8 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Infof(c, "Champion has been renamed: %s", name)
-	WriteAuthorizedChampion(w, _champion)
+	log.Infof(c, "Champion has been renamed: %s -> %s", prevName, name)
+	WriteAuthorizedChampion(w, &_champion)
 }
 
 // A combined handler for every methods of "/champion".
