@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/datastore"
+	"google.golang.org/appengine/log"
 )
 
 const TTL time.Duration = 7 * 24 * time.Hour // 7 days
@@ -147,6 +148,7 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.FormValue("name")
 	name = NormalizeName(name)
+	log.Debugf(c, "Trying to beat champion: %d by %s", score, name)
 	at := time.Now()
 	token := IssueToken(at.Unix())
 	champion := &Champion{
@@ -155,15 +157,19 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 		Token:     token,
 		ExpiresAt: at.Add(TTL), // after 7 days
 	}
+	var prevScore int
+	var prevName string
 	err = datastore.RunInTransaction(c, func(c context.Context) error {
 		prevChampion, err := LoadChampion(c, at)
 		if err != nil {
 			return err
 		}
-		if score <= prevChampion.Score {
+		prevScore = prevChampion.Score
+		prevName = prevChampion.Name
+		if score <= prevScore {
 			return &NotHigherScore{
 				Score:     score,
-				PrevScore: prevChampion.Score,
+				PrevScore: prevScore,
 			}
 		}
 		key := GetKey(c)
@@ -174,6 +180,10 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Infof(
+		c, "Champion has been beaten: %d by %s -> %d by %s",
+		prevScore, prevName, score, name,
+	)
 	WriteAuthorizedChampion(w, champion)
 }
 
@@ -182,6 +192,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	name := r.FormValue("name")
 	name = NormalizeName(name)
+	log.Debugf(c, "Trying to rename champion: %s", name)
 	_, token, _ := r.BasicAuth()
 	at := time.Now()
 	_champion := new(Champion)
@@ -209,6 +220,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Infof(c, "Champion has been renamed: %s", name)
 	WriteAuthorizedChampion(w, _champion)
 }
 
