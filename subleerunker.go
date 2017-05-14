@@ -225,10 +225,8 @@ func HandleChampion(w http.ResponseWriter, r *http.Request) {
 	case "PUT":
 		if r.FormValue("score") != "" {
 			BeatChampion(w, r)
-		} else if r.FormValue("name") != "" {
-			RenameChampion(w, r)
 		} else {
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+			RenameChampion(w, r)
 		}
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
