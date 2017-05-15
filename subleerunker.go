@@ -24,13 +24,14 @@ import (
 const TTL time.Duration = 7 * 24 * time.Hour // 7 days
 
 type Champion struct {
-	Score     int
-	Name      string
-	Token     string
-	ExpiresAt time.Time
+	Score      int
+	Name       string
+	Token      string
+	RecordedAt time.Time
+	ExpiresAt  time.Time
 }
 
-var NoChampion = &Champion{0, "", "", time.Time{}}
+var NoChampion = &Champion{0, "", "", time.Time{}, time.Time{}}
 
 type NotHigherScore struct {
 	Score     int
@@ -57,10 +58,6 @@ func init() {
 	http.HandleFunc("/champion", HandleChampion)
 }
 
-func GetKey(c context.Context) *datastore.Key {
-	return datastore.NewKey(c, "champion", "champion", 0, nil)
-}
-
 func IssueToken(seed int64) string {
 	data := make([]byte, 8)
 	binary.PutVarint(data, seed)
@@ -80,22 +77,30 @@ func WriteResult(w http.ResponseWriter, result interface{}) {
 
 // Loads the current best score from the Google Cloud Datastore.
 // Returns (score, name, authorized, err).
-func LoadChampion(c context.Context, at time.Time) (*Champion, error) {
-	key := GetKey(c)
-	champion := new(Champion)
-	err := datastore.Get(c, key, champion)
-	if err == datastore.ErrNoSuchEntity || at.After(champion.ExpiresAt) {
-		return NoChampion, nil
-	} else if err != nil {
-		return NoChampion, err
+func LoadChampion(c context.Context, at time.Time) (*Champion, *datastore.Key, error) {
+	parent := datastore.NewKey(c, "champions", "_", 0, nil)
+	q := datastore.NewQuery("champion").Ancestor(parent).
+		Filter("RecordedAt >", at.Add(-TTL)).
+		Order("-RecordedAt").Limit(10)
+	for t := q.Run(c); ; {
+		var champion Champion
+		key, err := t.Next(&champion)
+		if err == datastore.Done {
+			return NoChampion, nil, nil
+		} else if err != nil {
+			return NoChampion, nil, err
+		} else if at.After(champion.ExpiresAt) {
+			continue
+		} else {
+			return &champion, key, nil
+		}
 	}
-	return champion, nil
 }
 
 // A handler for "GET /champion".
 func GetChampion(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	champion, err := LoadChampion(c, time.Now())
+	champion, _, err := LoadChampion(c, time.Now())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -105,25 +110,29 @@ func GetChampion(w http.ResponseWriter, r *http.Request) {
 		Score      int       `json:"score"`
 		Name       string    `json:"name"`
 		Authorized bool      `json:"authorized"`
+		RecordedAt time.Time `json:"recordedAt"`
 		ExpiresAt  time.Time `json:"expiresAt"`
 	}{
 		champion.Score,
 		champion.Name,
 		champion.Token == token,
+		champion.RecordedAt,
 		champion.ExpiresAt,
 	})
 }
 
 func WriteAuthorizedChampion(w http.ResponseWriter, champion *Champion) {
 	WriteResult(w, struct {
-		Score     int       `json:"score"`
-		Name      string    `json:"name"`
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expiresAt"`
+		Score      int       `json:"score"`
+		Name       string    `json:"name"`
+		Token      string    `json:"token"`
+		RecordedAt time.Time `json:"recordedAt"`
+		ExpiresAt  time.Time `json:"expiresAt"`
 	}{
 		champion.Score,
 		champion.Name,
 		champion.Token,
+		champion.RecordedAt,
 		champion.ExpiresAt,
 	})
 }
@@ -152,15 +161,16 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	at := time.Now()
 	token := IssueToken(at.Unix())
 	champion := &Champion{
-		Score:     score,
-		Name:      name,
-		Token:     token,
-		ExpiresAt: at.Add(TTL), // after 7 days
+		Score:      score,
+		Name:       name,
+		Token:      token,
+		RecordedAt: at,
+		ExpiresAt:  at.Add(TTL), // after 7 days
 	}
 	var prevScore int
 	var prevName string
 	err = datastore.RunInTransaction(c, func(c context.Context) error {
-		prevChampion, err := LoadChampion(c, at)
+		prevChampion, _, err := LoadChampion(c, at)
 		if err != nil {
 			return err
 		}
@@ -172,7 +182,8 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 				PrevScore: prevScore,
 			}
 		}
-		key := GetKey(c)
+		parent := datastore.NewKey(c, "champions", "_", 0, nil)
+		key := datastore.NewIncompleteKey(c, "champion", parent)
 		_, err = datastore.Put(c, key, champion)
 		return err
 	}, nil)
@@ -198,7 +209,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 	var _champion Champion
 	var prevName string
 	err := datastore.RunInTransaction(c, func(c context.Context) error {
-		champion, err := LoadChampion(c, at)
+		champion, key, err := LoadChampion(c, at)
 		if err != nil {
 			return err
 		}
@@ -207,7 +218,6 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 			return &NotAuthorized{}
 		}
 		champion.Name = name
-		key := GetKey(c)
 		_, err = datastore.Put(c, key, champion)
 		_champion = *champion
 		return err
