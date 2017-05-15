@@ -26,12 +26,21 @@ const TTL time.Duration = 7 * 24 * time.Hour // 7 days
 type Champion struct {
 	Score      int
 	Name       string
-	Token      string
+	Playtime   time.Duration
 	RecordedAt time.Time
-	ExpiresAt  time.Time
+	ExpiresIn  time.Duration
+	Token      string
 }
 
-var NoChampion = &Champion{0, "", "", time.Time{}, time.Time{}}
+func (c *Champion) ExpiresAt() time.Time {
+	return c.RecordedAt.Add(c.ExpiresIn)
+}
+
+func (c *Champion) IsExpired(t time.Time) bool {
+	return t.After(c.ExpiresAt())
+}
+
+var NoChampion = &Champion{0, "", 0, time.Time{}, 0, ""}
 
 type NotHigherScore struct {
 	Score     int
@@ -77,19 +86,19 @@ func WriteResult(w http.ResponseWriter, result interface{}) {
 
 // Loads the current best score from the Google Cloud Datastore.
 // Returns (score, name, authorized, err).
-func LoadChampion(c context.Context, at time.Time) (*Champion, *datastore.Key, error) {
+func LoadChampion(c context.Context, t time.Time, ttl time.Duration) (*Champion, *datastore.Key, error) {
 	parent := datastore.NewKey(c, "champions", "_", 0, nil)
 	q := datastore.NewQuery("champion").Ancestor(parent).
-		Filter("RecordedAt >", at.Add(-TTL)).
+		Filter("RecordedAt >", t.Add(-ttl)).
 		Order("-RecordedAt").Limit(10)
-	for t := q.Run(c); ; {
+	for i := q.Run(c); ; {
 		var champion Champion
-		key, err := t.Next(&champion)
+		key, err := i.Next(&champion)
 		if err == datastore.Done {
 			return NoChampion, nil, nil
 		} else if err != nil {
 			return NoChampion, nil, err
-		} else if at.After(champion.ExpiresAt) {
+		} else if champion.IsExpired(t) {
 			continue
 		} else {
 			return &champion, key, nil
@@ -100,7 +109,7 @@ func LoadChampion(c context.Context, at time.Time) (*Champion, *datastore.Key, e
 // A handler for "GET /champion".
 func GetChampion(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	champion, _, err := LoadChampion(c, time.Now())
+	champion, _, err := LoadChampion(c, time.Now(), TTL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -109,15 +118,13 @@ func GetChampion(w http.ResponseWriter, r *http.Request) {
 	WriteResult(w, struct {
 		Score      int       `json:"score"`
 		Name       string    `json:"name"`
-		Authorized bool      `json:"authorized"`
-		RecordedAt time.Time `json:"recordedAt"`
 		ExpiresAt  time.Time `json:"expiresAt"`
+		Authorized bool      `json:"authorized"`
 	}{
 		champion.Score,
 		champion.Name,
+		champion.ExpiresAt(),
 		champion.Token == token,
-		champion.RecordedAt,
-		champion.ExpiresAt,
 	})
 }
 
@@ -125,15 +132,13 @@ func WriteAuthorizedChampion(w http.ResponseWriter, champion *Champion) {
 	WriteResult(w, struct {
 		Score      int       `json:"score"`
 		Name       string    `json:"name"`
-		Token      string    `json:"token"`
-		RecordedAt time.Time `json:"recordedAt"`
 		ExpiresAt  time.Time `json:"expiresAt"`
+		Token      string    `json:"token"`
 	}{
 		champion.Score,
 		champion.Name,
+		champion.ExpiresAt(),
 		champion.Token,
-		champion.RecordedAt,
-		champion.ExpiresAt,
 	})
 }
 
@@ -155,22 +160,31 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	playtime, err := strconv.ParseFloat(r.FormValue("playtime"), 64)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	name := r.FormValue("name")
 	name = NormalizeName(name)
-	log.Debugf(c, "Trying to beat champion: %d by %s", score, name)
-	at := time.Now()
-	token := IssueToken(at.Unix())
+	log.Debugf(
+		c, "Trying to beat champion: %d by '%s' in %.3f sec",
+		score, name, playtime,
+	)
+	t := time.Now()
+	token := IssueToken(t.Unix())
 	champion := &Champion{
 		Score:      score,
 		Name:       name,
+		Playtime:   time.Duration(playtime * float64(time.Second)),
+		RecordedAt: t,
+		ExpiresIn:  TTL,
 		Token:      token,
-		RecordedAt: at,
-		ExpiresAt:  at.Add(TTL), // after 7 days
 	}
 	var prevScore int
 	var prevName string
 	err = datastore.RunInTransaction(c, func(c context.Context) error {
-		prevChampion, _, err := LoadChampion(c, at)
+		prevChampion, _, err := LoadChampion(c, t, TTL)
 		if err != nil {
 			return err
 		}
@@ -192,8 +206,8 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Infof(
-		c, "Champion has been beaten: %d by %s -> %d by %s",
-		prevScore, prevName, score, name,
+		c, "Champion has been beaten: %d by '%s' -> %d by '%s' in %.3f sec",
+		prevScore, prevName, score, name, playtime,
 	)
 	WriteAuthorizedChampion(w, champion)
 }
@@ -205,11 +219,11 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 	name = NormalizeName(name)
 	log.Debugf(c, "Trying to rename champion: %s", name)
 	_, token, _ := r.BasicAuth()
-	at := time.Now()
+	t := time.Now()
 	var _champion Champion
 	var prevName string
 	err := datastore.RunInTransaction(c, func(c context.Context) error {
-		champion, key, err := LoadChampion(c, at)
+		champion, key, err := LoadChampion(c, t, TTL)
 		if err != nil {
 			return err
 		}
