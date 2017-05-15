@@ -130,10 +130,10 @@ func GetChampion(w http.ResponseWriter, r *http.Request) {
 
 func WriteAuthorizedChampion(w http.ResponseWriter, champion *Champion) {
 	WriteResult(w, struct {
-		Score      int       `json:"score"`
-		Name       string    `json:"name"`
-		ExpiresAt  time.Time `json:"expiresAt"`
-		Token      string    `json:"token"`
+		Score     int       `json:"score"`
+		Name      string    `json:"name"`
+		ExpiresAt time.Time `json:"expiresAt"`
+		Token     string    `json:"token"`
 	}{
 		champion.Score,
 		champion.Name,
