@@ -26,7 +26,7 @@ const TTL time.Duration = 7 * 24 * time.Hour // 7 days
 type Champion struct {
 	Score      int
 	Name       string
-	Playtime   time.Duration
+	Duration   time.Duration
 	RecordedAt time.Time
 	ExpiresIn  time.Duration
 	Token      string
@@ -160,7 +160,7 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	playtime, err := strconv.ParseFloat(r.FormValue("playtime"), 64)
+	duration, err := strconv.ParseFloat(r.FormValue("duration"), 64)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -169,14 +169,14 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	name = NormalizeName(name)
 	log.Debugf(
 		c, "Trying to beat champion: %d by '%s' in %.3f sec",
-		score, name, playtime,
+		score, name, duration,
 	)
 	t := time.Now()
 	token := IssueToken(t.Unix())
 	champion := &Champion{
 		Score:      score,
 		Name:       name,
-		Playtime:   time.Duration(playtime * float64(time.Second)),
+		Duration:   time.Duration(duration * float64(time.Second)),
 		RecordedAt: t,
 		ExpiresIn:  TTL,
 		Token:      token,
@@ -207,7 +207,7 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Infof(
 		c, "Champion has been beaten: %d by '%s' -> %d by '%s' in %.3f sec",
-		prevScore, prevName, score, name, playtime,
+		prevScore, prevName, score, name, duration,
 	)
 	WriteAuthorizedChampion(w, champion)
 }
