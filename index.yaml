@@ -1,0 +1,7 @@
+indexes:
+
+- kind: champion
+  ancestor: yes
+  properties:
+  - name: RecordedAt
+    direction: desc
