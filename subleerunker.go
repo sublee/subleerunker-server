@@ -95,8 +95,9 @@ func LoadChampion(c context.Context, t time.Time, ttl time.Duration) (*Champion,
 		var champion Champion
 		key, err := i.Next(&champion)
 		if err == datastore.Done {
-			return NoChampion, nil, nil
-		} else if err != nil {
+			break
+		}
+		if err != nil {
 			return NoChampion, nil, err
 		} else if champion.IsExpired(t) {
 			continue
@@ -104,6 +105,7 @@ func LoadChampion(c context.Context, t time.Time, ttl time.Duration) (*Champion,
 			return &champion, key, nil
 		}
 	}
+	return NoChampion, nil, nil
 }
 
 // A handler for "GET /champion".
@@ -124,7 +126,7 @@ func GetChampion(w http.ResponseWriter, r *http.Request) {
 		champion.Score,
 		champion.Name,
 		champion.ExpiresAt(),
-		champion.Token == token,
+		token != "" && token == champion.Token,
 	})
 }
 
