@@ -219,7 +219,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	name := r.FormValue("name")
 	name = NormalizeName(name)
-	log.Debugf(c, "Trying to rename champion: %s", name)
+	log.Debugf(c, "Trying to rename champion: '%s'", name)
 	_, token, _ := r.BasicAuth()
 	t := time.Now()
 	var _champion Champion
@@ -248,7 +248,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Infof(c, "Champion has been renamed: %s -> %s", prevName, name)
+	log.Infof(c, "Champion has been renamed: '%s' -> '%s'", prevName, name)
 	WriteAuthorizedChampion(w, &_champion)
 }
 
