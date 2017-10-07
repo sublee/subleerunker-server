@@ -26,6 +26,7 @@ const TTL time.Duration = 7 * 24 * time.Hour // 7 days
 type Champion struct {
 	Score      int
 	Name       string
+	Replay     string
 	Duration   time.Duration
 	RecordedAt time.Time
 	ExpiresIn  time.Duration
@@ -40,7 +41,7 @@ func (c *Champion) IsExpired(t time.Time) bool {
 	return t.After(c.ExpiresAt())
 }
 
-var NoChampion = &Champion{0, "", 0, time.Time{}, 0, ""}
+var NoChampion = &Champion{0, "", "", 0, time.Time{}, 0, ""}
 
 type NotHigherScore struct {
 	Score     int
@@ -120,11 +121,13 @@ func GetChampion(w http.ResponseWriter, r *http.Request) {
 	WriteResult(w, struct {
 		Score      int       `json:"score"`
 		Name       string    `json:"name"`
+		Replay     string    `json:"replay"`
 		ExpiresAt  time.Time `json:"expiresAt"`
 		Authorized bool      `json:"authorized"`
 	}{
 		champion.Score,
 		champion.Name,
+		champion.Replay,
 		champion.ExpiresAt(),
 		token != "" && token == champion.Token,
 	})
@@ -134,11 +137,13 @@ func WriteAuthorizedChampion(w http.ResponseWriter, champion *Champion) {
 	WriteResult(w, struct {
 		Score     int       `json:"score"`
 		Name      string    `json:"name"`
+		Replay    string    `json:"replay"`
 		ExpiresAt time.Time `json:"expiresAt"`
 		Token     string    `json:"token"`
 	}{
 		champion.Score,
 		champion.Name,
+		champion.Replay,
 		champion.ExpiresAt(),
 		champion.Token,
 	})
@@ -169,6 +174,7 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.FormValue("name")
 	name = NormalizeName(name)
+	replay := r.FormValue("replay")
 	log.Debugf(
 		c, "Trying to beat champion: %d by '%s' in %.3f sec",
 		score, name, duration,
@@ -178,6 +184,7 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	champion := &Champion{
 		Score:      score,
 		Name:       name,
+		Replay:     replay,
 		Duration:   time.Duration(duration * float64(time.Second)),
 		RecordedAt: t,
 		ExpiresIn:  TTL,
