@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -159,6 +160,12 @@ func NormalizeName(name string) string {
 	return name
 }
 
+func SuggestName(r *rand.Rand) string {
+	letters := "ABCDEFGHIJKLMNOPQRSTUVWXWZ"
+	letter := letters[r.Int() % len(letters)]
+	return strings.Repeat(string(letter), 3)
+}
+
 // A handler for "PUT /champion" to beat the previous record.
 func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
@@ -174,6 +181,10 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.FormValue("name")
 	name = NormalizeName(name)
+	if name == "" {
+		rand_ := rand.New(rand.NewSource(time.Now().UnixNano()))
+		name = SuggestName(rand_)
+	}
 	replay := r.FormValue("replay")
 	log.Debugf(
 		c, "Trying to beat champion: %d by '%s' in %.3f sec",
