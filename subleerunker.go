@@ -160,7 +160,7 @@ func NormalizeName(name string) string {
 
 func SuggestName(r *rand.Rand) string {
 	letters := "ABCDEFGHIJKLMNOPQRSTUVWXWZ"
-	letter := letters[r.Int() % len(letters)]
+	letter := letters[r.Int()%len(letters)]
 	return strings.Repeat(string(letter), 3)
 }
 
