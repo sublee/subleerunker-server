@@ -64,8 +64,6 @@ func (n *NotAuthorized) Error() string {
 }
 
 func init() {
-	fs := http.FileServer(http.Dir("."))
-	http.Handle("/", fs)
 	http.HandleFunc("/champion", HandleChampion)
 }
 
