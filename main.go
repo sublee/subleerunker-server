@@ -1,25 +1,26 @@
 // A simple HTTP server for world-best-score in SUBLEERUNKER.  It remembers
 // a score for about a week.
-package subleerunker
+package main
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 import (
-	"golang.org/x/net/context"
-	"google.golang.org/appengine"
-	"google.golang.org/appengine/datastore"
-	"google.golang.org/appengine/log"
+	"cloud.google.com/go/datastore"
+	 "google.golang.org/api/iterator"
 )
 
 const TTL time.Duration = 7 * 24 * time.Hour // 7 days
@@ -63,10 +64,6 @@ func (n *NotAuthorized) Error() string {
 	return "not authorized"
 }
 
-func init() {
-	http.HandleFunc("/champion", HandleChampion)
-}
-
 func IssueToken(seed int64) string {
 	data := make([]byte, 8)
 	binary.PutVarint(data, seed)
@@ -84,17 +81,26 @@ func WriteResult(w http.ResponseWriter, result interface{}) {
 	w.Write(output)
 }
 
+func ConnectDatastore(c context.Context) *datastore.Client {
+	client, err := datastore.NewClient(c, "subleerunker-166907")
+	if err != nil {
+		log.Fatalf("Failed to create Cloud Datastore client: %v", err)
+	}
+	return client
+}
+
 // Loads the current best score from the Google Cloud Datastore.
 // Returns (score, name, authorized, err).
-func LoadChampion(c context.Context, t time.Time, ttl time.Duration) (*Champion, *datastore.Key, error) {
-	parent := datastore.NewKey(c, "champions", "_", 0, nil)
-	q := datastore.NewQuery("champion").Ancestor(parent).
+func LoadChampion(c context.Context, ds *datastore.Client, t time.Time, ttl time.Duration) (*Champion, *datastore.Key, error) {
+	root := datastore.NameKey("champion", "_", nil)
+	query := datastore.NewQuery("champion").Ancestor(root).
 		Filter("RecordedAt >", t.Add(-ttl)).
 		Order("-RecordedAt").Limit(10)
-	for i := q.Run(c); ; {
+
+	for i := ds.Run(c, query); ; {
 		var champion Champion
 		key, err := i.Next(&champion)
-		if err == datastore.Done {
+		if err == iterator.Done {
 			break
 		}
 		if err != nil {
@@ -110,12 +116,17 @@ func LoadChampion(c context.Context, t time.Time, ttl time.Duration) (*Champion,
 
 // A handler for "GET /champion".
 func GetChampion(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
-	champion, _, err := LoadChampion(c, time.Now(), TTL)
+	c := r.Context()
+
+	ds := ConnectDatastore(c)
+	defer ds.Close()
+
+	champion, _, err := LoadChampion(c, ds, time.Now(), TTL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	_, token, _ := r.BasicAuth()
 	WriteResult(w, struct {
 		Score      int       `json:"score"`
@@ -166,28 +177,34 @@ func SuggestName(r *rand.Rand) string {
 
 // A handler for "PUT /champion" to beat the previous record.
 func BeatChampion(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
+	c := r.Context()
+
 	score, err := strconv.Atoi(r.FormValue("score"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	duration, err := strconv.ParseFloat(r.FormValue("duration"), 64)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	name := r.FormValue("name")
 	name = NormalizeName(name)
 	if name == "" {
 		rand_ := rand.New(rand.NewSource(time.Now().UnixNano()))
 		name = SuggestName(rand_)
 	}
+
 	replay := r.FormValue("replay")
-	log.Debugf(
-		c, "Trying to beat champion: %d by '%s' in %.3f sec",
+
+	log.Printf(
+		"Trying to beat champion: %d by '%s' in %.3f sec",
 		score, name, duration,
 	)
+
 	t := time.Now()
 	token := IssueToken(t.Unix())
 	champion := &Champion{
@@ -199,32 +216,42 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:  TTL,
 		Token:      token,
 	}
+
 	var prevScore int
 	var prevName string
-	err = datastore.RunInTransaction(c, func(c context.Context) error {
-		prevChampion, _, err := LoadChampion(c, t, TTL)
+
+	ds := ConnectDatastore(c)
+	defer ds.Close()
+
+	_, err = ds.RunInTransaction(c, func(tx *datastore.Transaction) error {
+		prevChampion, _, err := LoadChampion(c, ds, t, TTL)
 		if err != nil {
 			return err
 		}
+
 		prevScore = prevChampion.Score
 		prevName = prevChampion.Name
+
 		if score <= prevScore {
 			return &NotHigherScore{
 				Score:     score,
 				PrevScore: prevScore,
 			}
 		}
-		parent := datastore.NewKey(c, "champions", "_", 0, nil)
-		key := datastore.NewIncompleteKey(c, "champion", parent)
-		_, err = datastore.Put(c, key, champion)
+
+		root := datastore.NameKey("champion", "_", nil)
+		key := datastore.IncompleteKey("champion", root)
+
+		_, err = tx.Put(key, champion)
 		return err
-	}, nil)
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Infof(
-		c, "Champion has been beaten: %d by '%s' -> %d by '%s' in %.3f sec",
+
+	log.Printf(
+		"Champion has been beaten: %d by '%s' -> %d by '%s' in %.3f sec",
 		prevScore, prevName, score, name, duration,
 	)
 	WriteAuthorizedChampion(w, champion)
@@ -232,28 +259,37 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 
 // A handler for "PUT /champion" to rename the current record.
 func RenameChampion(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
+	c := r.Context()
+
 	name := r.FormValue("name")
 	name = NormalizeName(name)
-	log.Debugf(c, "Trying to rename champion: '%s'", name)
+	log.Printf("Trying to rename champion: '%s'", name)
+
 	_, token, _ := r.BasicAuth()
+
 	t := time.Now()
 	var _champion Champion
 	var prevName string
-	err := datastore.RunInTransaction(c, func(c context.Context) error {
-		champion, key, err := LoadChampion(c, t, TTL)
+
+	ds := ConnectDatastore(c)
+	defer ds.Close()
+
+	_, err := ds.RunInTransaction(c, func(tx *datastore.Transaction) error {
+		champion, key, err := LoadChampion(c, ds, t, TTL)
 		if err != nil {
 			return err
 		}
+
 		prevName = champion.Name
 		if champion.Token != token {
 			return &NotAuthorized{}
 		}
 		champion.Name = name
-		_, err = datastore.Put(c, key, champion)
+
+		_, err = tx.Put(key, champion)
 		_champion = *champion
 		return err
-	}, nil)
+	})
 	switch err.(type) {
 	case nil:
 		break
@@ -264,27 +300,43 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Infof(c, "Champion has been renamed: '%s' -> '%s'", prevName, name)
+	log.Printf("Champion has been renamed: '%s' -> '%s'", prevName, name)
 	WriteAuthorizedChampion(w, &_champion)
 }
 
 // A combined handler for every methods of "/champion".
 func HandleChampion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "https://sublee.github.io")
+
 	switch strings.ToUpper(r.Method) {
 	case "OPTIONS":
 		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization")
 		w.Header().Set("Access-Control-Max-Age", "86400")
+
 	case "GET":
 		GetChampion(w, r)
+
 	case "PUT":
 		if r.FormValue("score") != "" {
 			BeatChampion(w, r)
 		} else {
 			RenameChampion(w, r)
 		}
+
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func init() {
+	http.HandleFunc("/champion", HandleChampion)
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	http.ListenAndServe(fmt.Sprintf(":%s", port), nil)
 }
