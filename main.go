@@ -92,7 +92,7 @@ func ConnectDatastore(c context.Context) *datastore.Client {
 // Loads the current best score from the Google Cloud Datastore.
 // Returns (score, name, authorized, err).
 func LoadChampion(c context.Context, ds *datastore.Client, t time.Time, ttl time.Duration) (*Champion, *datastore.Key, error) {
-	root := datastore.NameKey("champions", "_", nil)
+	root := datastore.NameKey("champion", "_", nil)
 	query := datastore.NewQuery("champion").Ancestor(root).
 		Filter("RecordedAt >", t.Add(-ttl)).
 		Order("-RecordedAt").Limit(10)
@@ -239,8 +239,8 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		root := datastore.NameKey("champions", "_", nil)
-		key := datastore.IncompleteKey("champions", root)
+		root := datastore.NameKey("champion", "_", nil)
+		key := datastore.IncompleteKey("champion", root)
 
 		_, err = tx.Put(key, champion)
 		return err
