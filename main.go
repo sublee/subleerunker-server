@@ -244,7 +244,7 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 
 		_, err = tx.Put(key, champion)
 		return err
-	}, nil)
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -289,7 +289,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Put(key, champion)
 		_champion = *champion
 		return err
-	}, nil)
+	})
 	switch err.(type) {
 	case nil:
 		break
