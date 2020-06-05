@@ -91,14 +91,11 @@ func ConnectDatastore(c context.Context) *datastore.Client {
 
 // Loads the current best score from the Google Cloud Datastore.
 // Returns (score, name, authorized, err).
-func LoadChampion(c context.Context, t time.Time, ttl time.Duration) (*Champion, *datastore.Key, error) {
+func LoadChampion(c context.Context, ds *datastore.Client, t time.Time, ttl time.Duration) (*Champion, *datastore.Key, error) {
 	root := datastore.NameKey("champions", "_", nil)
 	query := datastore.NewQuery("champion").Ancestor(root).
 		Filter("RecordedAt >", t.Add(-ttl)).
 		Order("-RecordedAt").Limit(10)
-
-	ds := ConnectDatastore(c)
-	defer ds.Close()
 
 	for i := ds.Run(c, query); ; {
 		var champion Champion
@@ -120,11 +117,16 @@ func LoadChampion(c context.Context, t time.Time, ttl time.Duration) (*Champion,
 // A handler for "GET /champion".
 func GetChampion(w http.ResponseWriter, r *http.Request) {
 	c := r.Context()
-	champion, _, err := LoadChampion(c, time.Now(), TTL)
+
+	ds := ConnectDatastore(c)
+	defer ds.Close()
+
+	champion, _, err := LoadChampion(c, ds, time.Now(), TTL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	_, token, _ := r.BasicAuth()
 	WriteResult(w, struct {
 		Score      int       `json:"score"`
@@ -222,7 +224,7 @@ func BeatChampion(w http.ResponseWriter, r *http.Request) {
 	defer ds.Close()
 
 	_, err = ds.RunInTransaction(c, func(tx *datastore.Transaction) error {
-		prevChampion, _, err := LoadChampion(c, t, TTL)
+		prevChampion, _, err := LoadChampion(c, ds, t, TTL)
 		if err != nil {
 			return err
 		}
@@ -273,7 +275,7 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 	defer ds.Close()
 
 	_, err := ds.RunInTransaction(c, func(tx *datastore.Transaction) error {
-		champion, key, err := LoadChampion(c, t, TTL)
+		champion, key, err := LoadChampion(c, ds, t, TTL)
 		if err != nil {
 			return err
 		}
@@ -305,19 +307,23 @@ func RenameChampion(w http.ResponseWriter, r *http.Request) {
 // A combined handler for every methods of "/champion".
 func HandleChampion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "https://sublee.github.io")
+
 	switch strings.ToUpper(r.Method) {
 	case "OPTIONS":
 		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization")
 		w.Header().Set("Access-Control-Max-Age", "86400")
+
 	case "GET":
 		GetChampion(w, r)
+
 	case "PUT":
 		if r.FormValue("score") != "" {
 			BeatChampion(w, r)
 		} else {
 			RenameChampion(w, r)
 		}
+
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
